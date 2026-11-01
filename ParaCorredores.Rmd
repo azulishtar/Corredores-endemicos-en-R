@@ -1,0 +1,83 @@
+---
+title: "Corredores endemicos"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, echo=TRUE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readxl)
+
+# 1. Datos
+datos <- read_excel("ParaCorredores.xlsx", sheet = "corredoresCasoSE") %>%
+  rename_with(tolower) %>%
+  select(anio, corredor, semana, casos, poblacion)
+
+anio_actual   <- max(datos$anio)
+semana_actual <- max(datos$semana[datos$anio == anio_actual])
+
+datos <- datos %>%
+  group_by(corredor) %>%
+  complete(anio, semana = 1:53, fill = list(casos = 0)) %>%   # para completar semanas faltantes = 0
+  arrange(anio, semana) %>%
+  fill(poblacion, .direction = "downup") %>%                  
+  ungroup() %>%
+  filter(!(anio == anio_actual & semana > semana_actual)) %>% 
+  group_by(corredor, anio) %>%
+  mutate(inc     = casos / poblacion * 1e5,
+         inc_acu = cumsum(casos) / poblacion * 1e5) %>%
+  ungroup()
+
+unique(datos$corredor)                      
+
+```
+
+```{r}
+# 2. Función del corredor
+graficar <- function(df, var, titulo) {
+
+  corredor <- df %>%
+    filter(anio < anio_actual) %>%
+    group_by(semana) %>%
+    summarise(q1 = quantile(.data[[var]], 0.25, na.rm = TRUE),
+              q2 = median(.data[[var]], na.rm = TRUE),
+              q3 = quantile(.data[[var]], 0.75, na.rm = TRUE),
+              .groups = "drop")
+
+  actual <- filter(df, anio == anio_actual)
+  tope   <- max(corredor$q3, actual[[var]], na.rm = TRUE) * 1.1
+
+  ggplot(corredor, aes(semana)) +
+    geom_ribbon(aes(ymin = 0,  ymax = q1,   fill = "Éxito"),
+                color = "black", linewidth = 0.3, outline.type = "upper") +
+    geom_ribbon(aes(ymin = q1, ymax = q2,   fill = "Seguridad"),
+                color = "black", linewidth = 0.3) +
+    geom_ribbon(aes(ymin = q2, ymax = q3,   fill = "Alerta"),
+                color = "black", linewidth = 0.3) +
+    geom_ribbon(aes(ymin = q3, ymax = tope, fill = "Brote"),
+                color = "black", linewidth = 0.3, outline.type = "lower") +
+    geom_line(data = actual, aes(y = .data[[var]], color = factor(anio_actual)),
+              linewidth = 1.2) +
+    scale_fill_manual(NULL,
+      values = c(Éxito = "#BEDDE6", Seguridad = "#A0CD63",
+                 Alerta = "#FFFD54", Brote = "#EA3223"),
+      breaks = c("Brote", "Alerta", "Seguridad", "Éxito")) +
+    scale_color_manual(NULL, values = "black") +
+    scale_x_continuous(breaks = seq(1, 52, by = 4), expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    labs(title = titulo, x = "Semana epidemiológica",
+         y = "Casos por 100.000 hab.") +
+    theme_minimal()
+}
+```
+
+```{r}
+# 3. Gráficos
+graficar(filter(datos, corredor == "INFLUENZA"),    "inc",     "Influenza: incidencia semanal")
+graficar(filter(datos, corredor == "VARICELA"), "inc", "Varicela: incidencia semanal")
+graficar(filter(datos, corredor == "VARICELA"), "inc_acu", "Varicela: incidencia acumulada")
+graficar(filter(datos, corredor == "TUBERCULOSIS"),    "inc_acu",     "Tuberculosis: incidencia acumulada")
+
+```
+
